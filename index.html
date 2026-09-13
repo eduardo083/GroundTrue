@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1b5e20">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>CosechaFina 26/27</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+/* ═══════════════════════════════════════════
+   RESET & BASE
+═══════════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a1a;color:#fff}
+
+/* ═══════════════════════════════════════════
+   LAYOUT PRINCIPAL — tablet landscape/portrait
+   Landscape: sidebar derecha + mapa izquierda
+   Portrait:  mapa arriba + panel abajo
+═══════════════════════════════════════════ */
+#app{
+  display:grid;
+  width:100vw;height:100vh;height:100dvh;
+  grid-template-rows:auto 1fr auto;
+  grid-template-columns:1fr;
+  grid-template-areas:
+    "topbar"
+    "map"
+    "panel";
+}
+
+@media (orientation:landscape) and (min-width:600px){
+  #app{
+    grid-template-rows:auto 1fr;
+    grid-template-columns:1fr 340px;
+    grid-template-areas:
+      "topbar topbar"
+      "map    panel";
+  }
+  #panel{
+    border-top:none !important;
+    border-left:1.5px solid rgba(255,255,255,.1) !important;
+    overflow-y:auto;
+  }
+  #map{ border-radius:0 }
+}
+
+/* ═══════════════════════════════════════════
+   TOPBAR
+═══════════════════════════════════════════ */
+#topbar{
+  grid-area:topbar;
+  background:#1b5e20;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 16px;
+  padding-top:max(10px, env(safe-area-inset-top));
+  z-index:1000;position:relative;
+  border-bottom:1.5px solid rgba(255,255,255,.12);
+}
+#topbar-left{display:flex;align-items:center;gap:10px}
+#topbar-left h1{font-size:17px;font-weight:700;letter-spacing:.2px;color:#fff}
+#topbar-left .campaign{font-size:11px;color:#a5d6a7;margin-top:1px}
+#topbar-right{display:flex;align-items:center;gap:8px}
+
+/* GPS badge */
+#gps-badge{
+  display:flex;align-items:center;gap:6px;
+  background:rgba(0,0,0,.3);border-radius:24px;
+  padding:6px 12px;cursor:pointer;border:1px solid rgba(255,255,255,.15)
+}
+#gps-dot{width:9px;height:9px;border-radius:50%;background:#69f0ae;flex-shrink:0;transition:background .4s}
+#gps-dot.searching{animation:blink 1s infinite}
+#gps-dot.sim{background:#ffb300}
+#gps-dot.ok{background:#69f0ae}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.1}}
+#gps-txt{font-size:12px;color:#fff;white-space:nowrap}
+
+/* Conexión badge */
+#net-badge{
+  display:flex;align-items:center;gap:5px;
+  background:rgba(0,0,0,.3);border-radius:24px;
+  padding:6px 11px;font-size:11px;color:#fff;
+  border:1px solid rgba(255,255,255,.15)
+}
+#net-dot{width:8px;height:8px;border-radius:50%;background:#69f0ae;flex-shrink:0}
+#net-dot.offline{background:#ef5350}
+
+/* ═══════════════════════════════════════════
+   MAPA
+═══════════════════════════════════════════ */
+#map{grid-area:map;z-index:0;position:relative}
+
+/* Coords flotantes sobre el mapa */
+#coords-float{
+  position:absolute;bottom:8px;left:8px;z-index:500;
+  background:rgba(0,0,0,.62);color:#e0f2f1;
+  font-family:monospace;font-size:11px;
+  padding:5px 10px;border-radius:10px;
+  pointer-events:none;line-height:1.6;
+  border:1px solid rgba(255,255,255,.1)
+}
+
+/* Offline banner sobre mapa */
+#offline-banner{
+  position:absolute;top:8px;left:50%;transform:translateX(-50%);
+  z-index:500;background:rgba(183,28,28,.88);color:#fff;
+  padding:6px 16px;border-radius:20px;font-size:12px;font-weight:600;
+  display:none;white-space:nowrap;
+}
+
+/* ═══════════════════════════════════════════
+   PANEL LATERAL / INFERIOR
+═══════════════════════════════════════════ */
+#panel{
+  grid-area:panel;
+  background:#1e1e1e;
+  border-top:1.5px solid rgba(255,255,255,.1);
+  display:flex;flex-direction:column;
+  overflow:hidden;
+  padding-bottom:env(safe-area-inset-bottom,0);
+}
+
+/* STATUS */
+#status{
+  padding:8px 14px;font-size:12px;color:#aaa;
+  min-height:32px;line-height:1.4;flex-shrink:0;
+  border-bottom:1px solid rgba(255,255,255,.06)
+}
+#status b{color:#69f0ae}
+
+/* ═══════════════════════════════════════════
+   CHIPS DE CATEGORÍA — 3 columnas en tablet
+═══════════════════════════════════════════ */
+#cat-section{
+  flex-shrink:0;padding:10px 12px 8px;
+  border-bottom:1px solid rgba(255,255,255,.08)
+}
+#cat-label{font-size:10px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.08em;margin-bottom:7px}
+#cat-grid{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:6px;
+}
+.chip{
+  padding:9px 6px;border-radius:10px;
+  border:1.5px solid rgba(255,255,255,.15);
+  font-size:12px;font-weight:600;
+  background:rgba(255,255,255,.05);color:#ccc;
+  cursor:pointer;transition:all .12s;
+  text-align:center;user-select:none;
+  line-height:1.2;
+}
+.chip:active{transform:scale(.93)}
+.chip.selected{
+  border-color:var(--c);
+  background:var(--c);
+  color:#fff;
+}
+
+/* ═══════════════════════════════════════════
+   BOTONES DE ACCIÓN — grandes para tablet
+═══════════════════════════════════════════ */
+#actions{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr 1fr;
+  gap:6px;padding:10px 12px;flex-shrink:0;
+}
+#btn-tiff{background:#1a237e;color:#90caf9;border:1.5px solid #283593}
+#btn-tiff.loaded{background:#0d3320;color:#69f0ae;border-color:#2e7d32}
+#raster-bar{
+  display:none;flex-shrink:0;
+  background:#0d1f0d;border-bottom:1px solid rgba(105,240,174,.15);
+  padding:5px 14px;font-size:11px;color:#69f0ae;
+  align-items:center;gap:8px;
+}
+#clear-raster{margin-left:auto;background:none;border:none;color:#ef5350;font-size:12px;font-weight:700;cursor:pointer;}
+#tiff-progress{
+  position:absolute;inset:0;z-index:400;
+  background:rgba(0,0,0,.72);display:none;
+  align-items:center;justify-content:center;flex-direction:column;gap:12px;
+}
+#tiff-progress.show{display:flex}
+#tiff-progress-txt{color:#fff;font-size:13px;font-weight:600}
+#tiff-progress-bar{width:220px;height:5px;background:rgba(255,255,255,.2);border-radius:3px;overflow:hidden}
+#tiff-progress-fill{height:100%;background:#69f0ae;width:0%;transition:width .2s}
+.abtn{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:5px;padding:14px 6px;border-radius:14px;border:none;cursor:pointer;
+  font-size:12px;font-weight:700;line-height:1.2;
+  transition:all .12s;user-select:none;-webkit-user-select:none;
+}
+.abtn svg{width:26px;height:26px;flex-shrink:0}
+.abtn:active{transform:scale(.92)}
+#btn-voice{background:#0d3c6e;color:#90caf9;border:1.5px solid #1565c0}
+#btn-voice.rec{background:#7f0000;color:#ef9a9a;border-color:#c62828;animation:recpulse .7s infinite}
+#btn-gps{background:#1b3a1f;color:#a5d6a7;border:1.5px solid #2e7d32}
+#btn-photo{background:#3e2000;color:#ffcc80;border:1.5px solid #e65100}
+@keyframes recpulse{0%,100%{opacity:1}50%{opacity:.55}}
+
+/* ═══════════════════════════════════════════
+   LISTA DE WAYPOINTS
+═══════════════════════════════════════════ */
+#wp-section{flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+#wp-header{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 14px;flex-shrink:0;
+  border-bottom:1px solid rgba(255,255,255,.08)
+}
+#wp-header-left{font-size:11px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.07em}
+.exp-btns{display:flex;gap:6px}
+.exp-btn{
+  font-size:11px;padding:5px 11px;border-radius:9px;border:none;
+  cursor:pointer;font-weight:700;
+  background:rgba(46,125,50,.25);color:#a5d6a7;
+  border:1px solid rgba(46,125,50,.4)
+}
+.exp-btn:active{transform:scale(.95)}
+
+#wp-list{overflow-y:auto;flex:1;-webkit-overflow-scrolling:touch}
+.wp-row{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 14px;border-bottom:1px solid rgba(255,255,255,.05);
+  cursor:pointer;transition:background .1s
+}
+.wp-row:active{background:rgba(255,255,255,.05)}
+.wp-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0;border:2px solid rgba(255,255,255,.2)}
+.wp-info{flex:1;min-width:0}
+.wp-name{font-size:13px;font-weight:600;color:#e0e0e0}
+.wp-meta{font-size:10px;color:#666;font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+.wp-src{font-size:10px;color:#555;margin-top:1px}
+.wp-thumb{width:36px;height:36px;border-radius:7px;object-fit:cover;flex-shrink:0;cursor:pointer;border:1px solid rgba(255,255,255,.15)}
+.wp-del{background:none;border:none;color:#444;font-size:20px;line-height:1;padding:6px;cursor:pointer;flex-shrink:0}
+.wp-del:active{color:#ef5350}
+.empty-wp{padding:20px;font-size:13px;color:#444;text-align:center;font-style:italic}
+
+/* ═══════════════════════════════════════════
+   TOAST DE VOZ
+═══════════════════════════════════════════ */
+#voice-toast{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:rgba(0,0,0,.82);color:#fff;border-radius:20px;
+  padding:14px 26px;font-size:15px;font-weight:600;
+  display:none;z-index:9999;text-align:center;max-width:85vw;
+  pointer-events:none;border:1px solid rgba(255,255,255,.15)
+}
+
+/* ═══════════════════════════════════════════
+   POPUP DE WAYPOINT EN MAPA
+═══════════════════════════════════════════ */
+.leaflet-popup-content-wrapper{
+  border-radius:12px !important;padding:0 !important;
+  overflow:hidden;background:#1e1e1e !important;
+  box-shadow:0 4px 20px rgba(0,0,0,.5) !important;
+  border:1px solid rgba(255,255,255,.12) !important;
+}
+.leaflet-popup-content{margin:0 !important;min-width:200px}
+.leaflet-popup-tip{background:#1e1e1e !important}
+.leaflet-popup-close-button{color:#fff !important;font-size:18px !important;top:8px !important;right:10px !important}
+.wp-popup{padding:12px 14px}
+.wp-popup-title{font-size:14px;font-weight:700;color:#fff;margin-bottom:4px}
+.wp-popup-coords{font-size:10px;font-family:monospace;color:#888;margin-bottom:3px}
+.wp-popup-time{font-size:10px;color:#666;margin-bottom:8px}
+.wp-popup-img{width:100%;max-height:130px;object-fit:cover;display:block;border-radius:8px;margin-bottom:8px;cursor:pointer}
+.wp-popup-del{
+  width:100%;background:rgba(183,28,28,.2);border:1px solid rgba(183,28,28,.4);
+  color:#ef9a9a;padding:8px;font-size:12px;font-weight:700;
+  cursor:pointer;border-radius:8px;
+}
+.wp-popup-del:active{background:rgba(183,28,28,.4)}
+
+/* ═══════════════════════════════════════════
+   LEAFLET OVERRIDES (dark)
+═══════════════════════════════════════════ */
+.leaflet-control-zoom{border:none !important}
+.leaflet-control-zoom a{
+  background:#1e1e1e !important;color:#69f0ae !important;
+  border:1px solid rgba(255,255,255,.15) !important;
+  font-weight:700;width:36px !important;height:36px !important;
+  line-height:36px !important;font-size:18px !important;
+}
+.leaflet-control-layers{
+  background:#1e1e1e !important;border:1px solid rgba(255,255,255,.15) !important;
+  border-radius:10px !important;color:#ccc !important;font-size:13px !important
+}
+.leaflet-control-layers-toggle{
+  background-color:#1e1e1e !important;
+  border:1px solid rgba(255,255,255,.2) !important;
+  border-radius:8px !important;
+}
+.leaflet-control-attribution{font-size:8px !important;background:rgba(0,0,0,.4) !important;color:#666 !important}
+.leaflet-control-attribution a{color:#888 !important}
+
+/* ═══════════════════════════════════════════
+   PHOTO MODAL
+═══════════════════════════════════════════ */
+#photo-modal{
+  display:none;position:fixed;inset:0;
+  background:rgba(0,0,0,.9);z-index:9998;
+  align-items:center;justify-content:center
+}
+#photo-modal.show{display:flex}
+#photo-modal img{max-width:94vw;max-height:88vh;border-radius:12px;object-fit:contain}
+#photo-modal-close{
+  position:absolute;top:16px;right:16px;
+  background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);
+  border-radius:50%;width:38px;height:38px;font-size:20px;
+  cursor:pointer;color:#fff;display:flex;align-items:center;justify-content:center
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- TOPBAR -->
+  <div id="topbar">
+    <div id="topbar-left">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#69f0ae" stroke-width="2.2"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
+      <div>
+        <div style="font-size:16px;font-weight:700;color:#fff;line-height:1.1">CosechaFina 26/27</div>
+        <div style="font-size:10px;color:#a5d6a7;margin-top:1px">Relevamiento de cereales y oleaginosas de invierno</div>
+      </div>
+    </div>
+    <div id="topbar-right">
+      <div id="net-badge">
+        <div id="net-dot"></div>
+        <span id="net-txt">Online</span>
+      </div>
+      <div id="gps-badge" onclick="centerOnGPS()" title="Centrar en mi posición">
+        <div id="gps-dot" class="searching"></div>
+        <span id="gps-txt">GPS...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAPA -->
+  <div id="map">
+    <div id="coords-float">
+      Lat <b id="lat-v">--</b> &nbsp; Lon <b id="lon-v">--</b> &nbsp; ±<b id="acc-v">--</b>m
+    </div>
+    <div id="offline-banner">⚠ Sin conexión — tiles no disponibles</div>
+  <div id="raster-bar">
+      <span>🛰 <b id="raster-name">—</b></span>
+      <span><b id="raster-size">—</b></span>
+      <button id="clear-raster" onclick="clearRaster()">✕ Quitar imagen</button>
+    </div>
+    <div id="tiff-progress">
+      <div id="tiff-progress-txt">Leyendo GeoTIFF...</div>
+      <div id="tiff-progress-bar"><div id="tiff-progress-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- PANEL -->
+  <div id="panel">
+
+    <div id="status">Seleccioná una categoría y tocá el mapa para anotar un punto.</div>
+
+    <!-- CATEGORÍAS -->
+    <div id="cat-section">
+      <div id="cat-label">Categoría de cobertura</div>
+      <div id="cat-grid"></div>
+    </div>
+
+    <!-- ACCIONES -->
+    <div id="actions">
+      <button class="abtn" id="btn-voice" onclick="toggleVoice()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+        <span id="voice-lbl">Dictado por voz</span>
+      </button>
+      <button class="abtn" id="btn-gps" onclick="addWaypointGPS()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>
+          <circle cx="12" cy="12" r="9" stroke-dasharray="2 3"/>
+        </svg>
+        Anotar mi GPS
+      </button>
+      <button class="abtn" id="btn-tiff" onclick="document.getElementById('tiff-file').click()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M3 9l4-4 4 4 4-4 4 4"/>
+          <path d="M3 15l4-4 4 4 4-4 4 4"/>
+        </svg>
+        <span id="tiff-lbl">Cargar TIFF</span>
+      </button>
+      <button class="abtn" id="btn-photo" onclick="triggerPhoto()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+          <circle cx="12" cy="13" r="4"/>
+        </svg>
+        Tomar foto
+      </button>
+    </div>
+
+    <!-- WAYPOINTS -->
+    <div id="wp-section">
+      <div id="wp-header">
+        <span id="wp-header-left">Waypoints registrados: <span id="wp-count">0</span></span>
+        <div class="exp-btns">
+          <button class="exp-btn" onclick="exportGeoJSON()">⬇ GeoJSON</button>
+          <button class="exp-btn" onclick="exportCSV()">⬇ CSV</button>
+        </div>
+      </div>
+      <div id="wp-list">
+        <div class="empty-wp">Sin waypoints aún.<br>Seleccioná categoría y tocá el mapa.</div>
+      </div>
+    </div>
+
+  </div><!-- /panel -->
+</div><!-- /app -->
+
+<!-- TOAST VOZ -->
+<div id="voice-toast"></div>
+
+<!-- INPUTS OCULTOS -->
+<input type="file" accept="image/*" capture="environment" id="photo-file" style="display:none" onchange="handlePhoto(event)">
+<input type="file" accept=".tif,.tiff" id="tiff-file" style="display:none" onchange="loadTiff(event)">
+
+<!-- PHOTO MODAL -->
+<div id="photo-modal">
+  <button id="photo-modal-close" onclick="closeModal()">✕</button>
+  <img id="modal-img" src="" alt="foto del lote">
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script>
+// ══════════════════════════════════════════════════════
+// CATEGORÍAS — Cosecha Fina 26/27
+// ══════════════════════════════════════════════════════
+const CATS = [
+  {id:'trigo',    label:'Trigo',    color:'#f9a825'},
+  {id:'colza',    label:'Colza',    color:'#c6d800'},
+  {id:'avena',    label:'Avena',    color:'#bcaaa4'},
+  {id:'cebada',   label:'Cebada',   color:'#ffe0b2'},
+  {id:'centeno',  label:'Centeno',  color:'#a1887f'},
+  {id:'carinata', label:'Carinata', color:'#ff8f00'},
+  {id:'camelina', label:'Camelina', color:'#ffe066'},
+  {id:'vicia',    label:'Vicia',    color:'#ab47bc'},
+  {id:'arveja',   label:'Arveja',   color:'#4caf50'},
+  {id:'pasturas', label:'Pasturas', color:'#2e7d32'},
+  {id:'natural',  label:'Natural',  color:'#1b5e20'},
+  {id:'barbecho', label:'Barbecho', color:'#8d6e63'},
+  {id:'verdeo',   label:'Verdeo',   color:'#9ccc65'}
+];
+const ALIASES = {
+  trigo:   ['trigo','trigal'],
+  colza:   ['colza','canola'],
+  avena:   ['avena'],
+  cebada:  ['cebada','cebadal'],
+  centeno: ['centeno'],
+  carinata:['carinata'],
+  camelina:['camelina'],
+  vicia:   ['vicia','vicia villosa'],
+  arveja:  ['arveja','arvejas'],
+  pasturas:['pastura','pasturas','pastizal','pasto'],
+  natural: ['campo natural','natural','campo'],
+  barbecho:['barbecho','rastrojo'],
+  verdeo:  ['verdeo','verdeos']
+};
+
+// ══════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════
+let currentCat = null;
+let waypoints = [];
+let currentPos = null;
+let pendingPhoto = null;
+let map = null;
+let gpsMarker = null;
+let gpsCircle = null;
+let leafletMarkers = {};
+let recognition = null;
+let isRec = false;
+
+// ══════════════════════════════════════════════════════
+// MAPA LEAFLET
+// ══════════════════════════════════════════════════════
+function initMap() {
+  map = L.map('map', {
+    center: [-34.62, -60.45],
+    zoom: 13,
+    zoomControl: true,
+    attributionControl: true,
+    tap: true,
+    tapTolerance: 20  // más tolerante para dedos grandes
+  });
+
+  // ── ESRI Satélite ──
+  const esriSat = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution:'Tiles © Esri · Maxar · GeoEye', maxZoom:19 }
+  );
+
+  // ── ESRI Híbrido (satélite + etiquetas) ──
+  const esriHybrid = L.layerGroup([
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {maxZoom:19}),
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      {maxZoom:19, attribution:'Labels © Esri'})
+  ]);
+
+  // ── ESRI Topográfico ──
+  const esriTopo = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    { attribution:'Tiles © Esri', maxZoom:19 }
+  );
+
+  // Satelital por defecto
+  esriSat.addTo(map);
+
+  L.control.layers({
+    '🛰 ESRI Satélite':    esriSat,
+    '🛰 ESRI Híbrido':     esriHybrid,
+    '🏔 ESRI Topográfico': esriTopo
+  }, {}, { position:'topright', collapsed:true }).addTo(map);
+
+  map.zoomControl.setPosition('bottomright');
+
+  // Click → waypoint
+  map.on('click', e => {
+    if (!currentCat) {
+      setStatus('⚠ Primero seleccioná una categoría de cobertura.');
+      return;
+    }
+    addWaypointAt(e.latlng.lat, e.latlng.lng, 'tap');
+  });
+
+  // Coords bajo cursor (desktop/tablet con mouse)
+  map.on('mousemove', e => {
+    document.getElementById('lat-v').textContent = e.latlng.lat.toFixed(6);
+    document.getElementById('lon-v').textContent = e.latlng.lng.toFixed(6);
+  });
+}
+
+// ══════════════════════════════════════════════════════
+// WAYPOINTS
+// ══════════════════════════════════════════════════════
+function addWaypointGPS() {
+  if (!currentPos) { setStatus('⚠ Sin GPS aún. Esperá la señal o tocá el mapa.'); return; }
+  if (!currentCat) { setStatus('⚠ Seleccioná una categoría primero.'); return; }
+  addWaypointAt(currentPos.lat, currentPos.lon, 'gps');
+}
+
+function addWaypointAt(lat, lon, source, catOverride) {
+  const cat = catOverride || currentCat;
+  if (!cat) return;
+  const wp = {
+    id: Date.now(),
+    lat, lon,
+    acc: source === 'gps' ? (currentPos ? currentPos.acc : 0) : 0,
+    cat: cat.id, label: cat.label, color: cat.color,
+    time: new Date().toISOString(),
+    source,
+    photoData: null
+  };
+  if (pendingPhoto) { wp.photoData = pendingPhoto; pendingPhoto = null; }
+  waypoints.push(wp);
+  addLeafletMarker(wp);
+  updateWpCount();
+  renderList();
+  saveLocal();
+  const srcLabel = {gps:'GPS', tap:'toque en mapa', voz:'voz'}[source] || source;
+  setStatus('<b>✓ #' + waypoints.length + ' ' + cat.label + '</b> · ' + srcLabel + ' · ' + lat.toFixed(5) + ', ' + lon.toFixed(5));
+  if (navigator.vibrate) navigator.vibrate([50, 30, 100]);
+}
+
+function addLeafletMarker(wp) {
+  const idx = waypoints.indexOf(wp) + 1;
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="
+      width:32px;height:32px;border-radius:50%;
+      background:${wp.color};border:3px solid rgba(255,255,255,.9);
+      box-shadow:0 3px 8px rgba(0,0,0,.5);
+      display:flex;align-items:center;justify-content:center;
+      font-size:11px;font-weight:800;color:#fff;
+      font-family:sans-serif;cursor:pointer;
+      text-shadow:0 1px 2px rgba(0,0,0,.5);
+    ">${idx}</div>`,
+    iconSize: [32, 32], iconAnchor: [16, 16], popupAnchor: [0, -20]
+  });
+  const marker = L.marker([wp.lat, wp.lon], {icon})
+    .addTo(map)
+    .bindPopup(buildPopup(wp, idx), {maxWidth:240, minWidth:200});
+  leafletMarkers[wp.id] = marker;
+}
+
+function buildPopup(wp, idx) {
+  return `<div class="wp-popup">
+    <div class="wp-popup-title" style="color:${wp.color}">#${idx} ${wp.label}</div>
+    <div class="wp-popup-coords">${wp.lat.toFixed(7)}, ${wp.lon.toFixed(7)}</div>
+    <div class="wp-popup-time">${wpSrcIcon(wp.source)} ${wp.source}${wp.acc ? ' · ±' + wp.acc + 'm' : ''} · ${wp.time.slice(11,19)}</div>
+    ${wp.photoData ? `<img class="wp-popup-img" src="${wp.photoData}" onclick="openModal(${wp.id})">` : ''}
+    <button class="wp-popup-del" onclick="deleteWp(${wp.id})">🗑 Eliminar este waypoint</button>
+  </div>`;
+}
+
+function deleteWp(id) {
+  map.closePopup();
+  if (leafletMarkers[id]) { map.removeLayer(leafletMarkers[id]); delete leafletMarkers[id]; }
+  waypoints = waypoints.filter(w => w.id !== id);
+  rebuildMarkers();
+  updateWpCount(); renderList(); saveLocal();
+}
+
+function rebuildMarkers() {
+  Object.values(leafletMarkers).forEach(m => map.removeLayer(m));
+  leafletMarkers = {};
+  waypoints.forEach(wp => addLeafletMarker(wp));
+}
+
+function updateWpCount() {
+  document.getElementById('wp-count').textContent = waypoints.length;
+}
+
+function renderList() {
+  const list = document.getElementById('wp-list');
+  if (!waypoints.length) {
+    list.innerHTML = '<div class="empty-wp">Sin waypoints aún.<br>Seleccioná categoría y tocá el mapa.</div>';
+    return;
+  }
+  list.innerHTML = '';
+  [...waypoints].reverse().forEach((wp, ri) => {
+    const i = waypoints.length - 1 - ri;
+    const d = document.createElement('div');
+    d.className = 'wp-row';
+    d.onclick = () => flyTo(wp.id);
+    d.innerHTML = `
+      <div class="wp-dot" style="background:${wp.color}"></div>
+      <div class="wp-info">
+        <div class="wp-name">#${i+1} ${wp.label}</div>
+        <div class="wp-meta">${wp.lat.toFixed(6)}, ${wp.lon.toFixed(6)} · ${wp.time.slice(11,19)}</div>
+        <div class="wp-src">${wpSrcIcon(wp.source)} ${wp.source}${wp.acc ? ' · ±'+wp.acc+'m' : ''}</div>
+      </div>
+      ${wp.photoData ? `<img class="wp-thumb" src="${wp.photoData}" onclick="event.stopPropagation();openModal(${wp.id})">` : ''}
+      <button class="wp-del" onclick="event.stopPropagation();deleteWp(${wp.id})">×</button>
+    `;
+    list.appendChild(d);
+  });
+}
+
+function flyTo(id) {
+  const wp = waypoints.find(w => w.id === id);
+  if (!wp) return;
+  map.flyTo([wp.lat, wp.lon], 16, {duration: .8});
+  setTimeout(() => { if (leafletMarkers[id]) leafletMarkers[id].openPopup(); }, 900);
+}
+
+function wpSrcIcon(s) {
+  return s === 'gps' ? '📡' : s === 'tap' ? '👆' : s === 'voz' ? '🎙' : '⊙';
+}
+
+// ══════════════════════════════════════════════════════
+// CATEGORÍAS
+// ══════════════════════════════════════════════════════
+function buildCats() {
+  const grid = document.getElementById('cat-grid');
+  CATS.forEach(c => {
+    const btn = document.createElement('button');
+    btn.className = 'chip';
+    btn.id = 'chip-' + c.id;
+    btn.textContent = c.label;
+    btn.style.setProperty('--c', c.color);
+    btn.onclick = () => selectCat(c);
+    grid.appendChild(btn);
+  });
+}
+
+function selectCat(c) {
+  currentCat = c;
+  document.querySelectorAll('.chip').forEach(b => b.classList.remove('selected'));
+  document.getElementById('chip-' + c.id).classList.add('selected');
+  setStatus('Categoría: <b>' + c.label + '</b>. Tocá el mapa para anotar, o usá GPS / micrófono.');
+}
+
+// ══════════════════════════════════════════════════════
+// VOZ
+// ══════════════════════════════════════════════════════
+function toggleVoice() { isRec ? stopVoice() : startVoice(); }
+
+function startVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    setStatus('⚠ Reconocimiento de voz no disponible. Usá Chrome.');
+    return;
+  }
+  recognition = new SR();
+  recognition.lang = 'es-AR';
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 3;
+
+  recognition.onstart = () => {
+    isRec = true;
+    document.getElementById('btn-voice').classList.add('rec');
+    document.getElementById('voice-lbl').textContent = 'Escuchando...';
+    showToast('🎙  Decí el cultivo...');
+    setStatus('🎙 Escuchando — trigo, colza, avena, vicia, arveja, barbecho...');
+  };
+  recognition.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) {
+        const txt = e.results[i][0].transcript.toLowerCase().trim();
+        showToast('Escuché: "' + txt + '"');
+        processVoice(txt);
+      } else interim += e.results[i][0].transcript;
+    }
+    if (interim) showToast('🎙  ' + interim);
+  };
+  recognition.onerror = e => {
+    const msgs = {
+      'not-allowed': 'Permiso de micrófono denegado. Activalo en los ajustes del sitio.',
+      'no-speech':   'No escuché nada. Intentá de nuevo.',
+      'network':     'Sin conexión para reconocimiento de voz.'
+    };
+    setStatus('⚠ ' + (msgs[e.error] || 'Error de voz: ' + e.error));
+    showToast(msgs[e.error] || 'Error');
+    stopVoice();
+  };
+  recognition.onend = stopVoice;
+  recognition.start();
+}
+
+function stopVoice() {
+  isRec = false;
+  if (recognition) try { recognition.stop(); } catch(e) {}
+  document.getElementById('btn-voice').classList.remove('rec');
+  document.getElementById('voice-lbl').textContent = 'Dictado por voz';
+  setTimeout(hideToast, 2500);
+}
+
+function processVoice(texto) {
+  for (const [catId, words] of Object.entries(ALIASES)) {
+    if (words.some(w => texto.includes(w))) {
+      const cat = CATS.find(c => c.id === catId);
+      selectCat(cat);
+      const lat = currentPos ? currentPos.lat : map.getCenter().lat;
+      const lon = currentPos ? currentPos.lon : map.getCenter().lng;
+      addWaypointAt(lat, lon, currentPos ? 'voz' : 'voz-centro', cat);
+      showToast('✓  ' + cat.label + ' anotado');
+      return;
+    }
+  }
+  setStatus('No reconocí categoría en "' + texto + '". Probá: trigo, colza, avena, vicia...');
+  showToast('No reconocido: "' + texto + '"');
+}
+
+function showToast(msg) { const t = document.getElementById('voice-toast'); t.textContent = msg; t.style.display = 'block'; }
+function hideToast() { document.getElementById('voice-toast').style.display = 'none'; }
+
+// ══════════════════════════════════════════════════════
+// GPS
+// ══════════════════════════════════════════════════════
+function initGPS() {
+  if (!navigator.geolocation) { startSim(); return; }
+  navigator.geolocation.watchPosition(pos => {
+    const { latitude: lat, longitude: lon, accuracy: acc } = pos.coords;
+    currentPos = { lat, lon, acc: Math.round(acc) };
+    document.getElementById('lat-v').textContent = lat.toFixed(6);
+    document.getElementById('lon-v').textContent = lon.toFixed(6);
+    document.getElementById('acc-v').textContent = Math.round(acc);
+    document.getElementById('gps-dot').className = 'ok';
+    document.getElementById('gps-txt').textContent = '±' + Math.round(acc) + 'm';
+    updateGPSMarker(lat, lon, acc);
+  }, () => {
+    document.getElementById('gps-dot').className = 'sim';
+    document.getElementById('gps-txt').textContent = 'Sin GPS·Demo';
+    startSim();
+  }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 12000 });
+}
+
+function updateGPSMarker(lat, lon, acc) {
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="width:18px;height:18px;border-radius:50%;background:#1e88e5;border:3px solid #fff;box-shadow:0 0 0 3px rgba(30,136,229,.35)"></div>`,
+    iconSize: [18, 18], iconAnchor: [9, 9]
+  });
+  if (!gpsMarker) {
+    gpsMarker = L.marker([lat, lon], { icon, zIndexOffset: 1000 }).addTo(map);
+    gpsCircle = L.circle([lat, lon], { radius: acc, color: '#1e88e5', fillColor: '#1e88e5', fillOpacity: .08, weight: 1 }).addTo(map);
+    map.setView([lat, lon], 14);
+  } else {
+    gpsMarker.setLatLng([lat, lon]);
+    gpsCircle.setLatLng([lat, lon]);
+    gpsCircle.setRadius(acc);
+  }
+}
+
+function centerOnGPS() {
+  if (currentPos) map.flyTo([currentPos.lat, currentPos.lon], 15, { duration: .6 });
+}
+
+let simStep = 0;
+function startSim() {
+  const bLat = -34.62 + Math.random() * .03;
+  const bLon = -60.45 + Math.random() * .04;
+  updateGPSMarker(bLat, bLon, 8);
+  map.setView([bLat, bLon], 14);
+  setInterval(() => {
+    simStep++;
+    const lat = bLat + Math.sin(simStep * .25) * .0018 + simStep * .000035;
+    const lon = bLon + simStep * .00009;
+    currentPos = { lat, lon, acc: 5 };
+    document.getElementById('lat-v').textContent = lat.toFixed(6);
+    document.getElementById('lon-v').textContent = lon.toFixed(6);
+    document.getElementById('acc-v').textContent = 5;
+    updateGPSMarker(lat, lon, 5);
+  }, 2500);
+}
+
+// ══════════════════════════════════════════════════════
+// FOTO
+// ══════════════════════════════════════════════════════
+function triggerPhoto() { document.getElementById('photo-file').click(); }
+
+function handlePhoto(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const data = ev.target.result;
+    const last = waypoints[waypoints.length - 1];
+    if (last) {
+      last.photoData = data;
+      const idx = waypoints.indexOf(last) + 1;
+      if (leafletMarkers[last.id]) leafletMarkers[last.id].setPopupContent(buildPopup(last, idx));
+      renderList(); saveLocal();
+      setStatus('📷 Foto asociada al waypoint #' + waypoints.length + ' (' + last.label + ')');
+    } else {
+      pendingPhoto = data;
+      setStatus('📷 Foto guardada — se adjuntará al próximo waypoint que anotes.');
+    }
+  };
+  reader.readAsDataURL(file);
+  e.target.value = '';
+}
+
+function openModal(id) {
+  const wp = waypoints.find(w => w.id == id);
+  if (!wp || !wp.photoData) return;
+  document.getElementById('modal-img').src = wp.photoData;
+  document.getElementById('photo-modal').classList.add('show');
+}
+function closeModal() { document.getElementById('photo-modal').classList.remove('show'); }
+
+// ══════════════════════════════════════════════════════
+// EXPORT
+// ══════════════════════════════════════════════════════
+function exportGeoJSON() {
+  if (!waypoints.length) { setStatus('No hay waypoints para exportar.'); return; }
+  const geo = {
+    type: 'FeatureCollection',
+    name: 'CosechaFina_2627_' + new Date().toISOString().slice(0,10),
+    crs: { type:'name', properties:{ name:'urn:ogc:def:crs:OGC:1.3:CRS84' } },
+    features: waypoints.map((wp, i) => ({
+      type: 'Feature',
+      geometry: { type:'Point', coordinates: [+wp.lon.toFixed(7), +wp.lat.toFixed(7)] },
+      properties: {
+        id: i+1, categoria: wp.cat, etiqueta: wp.label,
+        fuente: wp.source, precision_m: wp.acc || null,
+        fecha_hora: wp.time, tiene_foto: !!wp.photoData
+      }
+    }))
+  };
+  dlBlob(JSON.stringify(geo, null, 2), 'application/geo+json',
+    'CosechaFina_2627_' + new Date().toISOString().slice(0,10) + '.geojson');
+  setStatus('✓ GeoJSON exportado — ' + waypoints.length + ' waypoints.');
+}
+
+function exportCSV() {
+  if (!waypoints.length) return;
+  const rows = [['id','categoria','etiqueta','latitud','longitud','precision_m','fuente','fecha_hora','tiene_foto']];
+  waypoints.forEach((wp, i) => rows.push([
+    i+1, wp.cat, wp.label, wp.lat.toFixed(7), wp.lon.toFixed(7),
+    wp.acc||'', wp.source, wp.time, wp.photoData?'si':'no'
+  ]));
+  dlBlob(rows.map(r => r.join(',')).join('\n'), 'text/csv',
+    'CosechaFina_2627_' + new Date().toISOString().slice(0,10) + '.csv');
+  setStatus('✓ CSV exportado.');
+}
+
+function dlBlob(content, type, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], {type}));
+  a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+// ══════════════════════════════════════════════════════
+// PERSISTENCIA
+// ══════════════════════════════════════════════════════
+function saveLocal() {
+  try {
+    localStorage.setItem('cf2627_tablet_wps', JSON.stringify(
+      waypoints.map(w => ({...w, photoData: w.photoData ? true : null}))
+    ));
+  } catch(e) {}
+}
+
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem('cf2627_tablet_wps');
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (saved.length) {
+        waypoints = saved;
+        setTimeout(() => {
+          waypoints.forEach(wp => addLeafletMarker(wp));
+          map.setView([waypoints[0].lat, waypoints[0].lon], 14);
+        }, 600);
+        updateWpCount(); renderList();
+        setStatus('✓ ' + saved.length + ' waypoints cargados de la sesión anterior.');
+      }
+    }
+  } catch(e) {}
+}
+
+// ══════════════════════════════════════════════════════
+// CONECTIVIDAD — degradación automática
+// ══════════════════════════════════════════════════════
+function updateNetStatus() {
+  const online = navigator.onLine;
+  document.getElementById('net-dot').className = online ? '' : 'offline';
+  document.getElementById('net-txt').textContent = online ? 'Online' : 'Sin datos';
+  document.getElementById('offline-banner').style.display = online ? 'none' : 'block';
+}
+window.addEventListener('online',  updateNetStatus);
+window.addEventListener('offline', updateNetStatus);
+
+// ══════════════════════════════════════════════════════
+// STATUS CON HTML
+// ══════════════════════════════════════════════════════
+function setStatus(msg) {
+  document.getElementById('status').innerHTML = msg;
+}
+
+// ══════════════════════════════════════════════════════
+// GEOTIFF — 8 bits RGB ya renderizado desde QGIS
+// ══════════════════════════════════════════════════════
+let rasterOverlay = null;
+
+async function loadTiff(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+
+  showTiffProgress('Leyendo archivo...', 10);
+
+  try {
+    const buf = await file.arrayBuffer();
+    showTiffProgress('Parseando GeoTIFF...', 30);
+
+    const tiff  = await GeoTIFF.fromArrayBuffer(buf);
+    const image = await tiff.getImage();
+    const bbox  = image.getBoundingBox(); // [minLon, minLat, maxLon, maxLat]
+    const [minLon, minLat, maxLon, maxLat] = bbox;
+    const W = image.getWidth();
+    const H = image.getHeight();
+
+    showTiffProgress('Leyendo bandas RGB...', 55);
+
+    // 8 bits RGB — leer las 3 bandas juntas (interleaved)
+    const samples = await image.readRasters({ interleave: true });
+    // samples es Uint8Array con R,G,B,R,G,B,... (o RGBA si tiene alpha)
+    const bandCount = image.getSamplesPerPixel();
+
+    showTiffProgress('Renderizando imagen...', 78);
+
+    const offscreen = new OffscreenCanvas(W, H);
+    const octx = offscreen.getContext('2d');
+    const imgData = octx.createImageData(W, H);
+    const d = imgData.data;
+
+    for (let i = 0; i < W * H; i++) {
+      const src = i * bandCount;
+      const dst = i * 4;
+      d[dst]   = samples[src];                          // R
+      d[dst+1] = samples[src + 1];                      // G
+      d[dst+2] = samples[src + 2];                      // B
+      d[dst+3] = bandCount === 4 ? samples[src+3] : 255; // A
+    }
+    octx.putImageData(imgData, 0, 0);
+
+    showTiffProgress('Agregando al mapa...', 92);
+
+    // Convertir OffscreenCanvas a blob → URL → ImageOverlay de Leaflet
+    const blob = await offscreen.convertToBlob({ type: 'image/png' });
+    const url  = URL.createObjectURL(blob);
+
+    // Quitar overlay anterior si había
+    if (rasterOverlay) { map.removeLayer(rasterOverlay); rasterOverlay = null; }
+
+    const bounds = [[minLat, minLon], [maxLat, maxLon]];
+    rasterOverlay = L.imageOverlay(url, bounds, { opacity: 1, interactive: false }).addTo(map);
+    map.fitBounds(bounds, { padding: [20, 20] });
+
+    // Info bar
+    document.getElementById('raster-name').textContent = file.name;
+    document.getElementById('raster-size').textContent = W + '×' + H + ' px';
+    document.getElementById('raster-bar').style.display = 'flex';
+
+    // Botón cambia a estado "cargado"
+    document.getElementById('btn-tiff').classList.add('loaded');
+    document.getElementById('tiff-lbl').textContent = 'TIFF cargado';
+
+    hideTiffProgress();
+    setStatus('✓ GeoTIFF cargado — ' + file.name + '  (' + W + '×' + H + ' px)  · Tocá el mapa para anotar.');
+
+  } catch(err) {
+    hideTiffProgress();
+    setStatus('⚠ Error al leer el GeoTIFF: ' + err.message + '. Verificá que sea EPSG:4326 con 3 bandas.');
+    console.error(err);
+  }
+}
+
+function clearRaster() {
+  if (rasterOverlay) { map.removeLayer(rasterOverlay); rasterOverlay = null; }
+  document.getElementById('raster-bar').style.display = 'none';
+  document.getElementById('btn-tiff').classList.remove('loaded');
+  document.getElementById('tiff-lbl').textContent = 'Cargar TIFF';
+  setStatus('Imagen satelital quitada del mapa.');
+}
+
+function showTiffProgress(msg, pct) {
+  const el = document.getElementById('tiff-progress');
+  el.classList.add('show');
+  document.getElementById('tiff-progress-txt').textContent = msg;
+  document.getElementById('tiff-progress-fill').style.width = pct + '%';
+}
+function hideTiffProgress() {
+  document.getElementById('tiff-progress').classList.remove('show');
+  document.getElementById('tiff-progress-fill').style.width = '0%';
+}
+
+// ══════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════
+document.getElementById('photo-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('photo-modal')) closeModal();
+});
+buildCats();
+initMap();
+loadLocal();
+initGPS();
+updateNetStatus();
+</script>
+</body>
+</html>
